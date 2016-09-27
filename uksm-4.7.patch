@@ -13,10 +13,10 @@ index 6a5e2a1..09eaa9a1 100644
  numa_memory_policy.txt
 diff --git a/Documentation/vm/uksm.txt b/Documentation/vm/uksm.txt
 new file mode 100644
-index 0000000..387d96a
+index 0000000..8fce86f
 --- /dev/null
 +++ b/Documentation/vm/uksm.txt
-@@ -0,0 +1,59 @@
+@@ -0,0 +1,60 @@
 +The Ultra Kernel Samepage Merging feature
 +----------------------------------------------
 +/*
@@ -76,10 +76,20 @@ index 0000000..387d96a
 +2012-12-31 UKSM 0.1.2.2 Minor bug fixes.
 +2014-07-02 UKSM 0.1.2.3 Fix a " __this_cpu_read() in preemptible bug".
 +2015-04-22 UKSM 0.1.2.4 Fix a race condition that can sometimes trigger anonying warnings.
++2016-09-10 UKSM 0.1.2.5 Fix a bug in dedup ratio calculation.
 diff --git a/fs/exec.c b/fs/exec.c
-index 887c1c9..b61553c 100644
+index 887c1c9..2bee16e 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
+@@ -19,7 +19,7 @@
+  * current->executable is only used by the procfs.  This allows a dispatch
+  * table to check for several different types  of binary formats.  We keep
+  * trying until we recognize the file or we run out of supported binary
+- * formats. 
++ * formats.
+  */
+ 
+ #include <linux/slab.h>
 @@ -57,6 +57,7 @@
  #include <linux/oom.h>
  #include <linux/compat.h>
@@ -88,6 +98,14 @@ index 887c1c9..b61553c 100644
  
  #include <asm/uaccess.h>
  #include <asm/mmu_context.h>
+@@ -1273,6 +1274,7 @@ void setup_new_exec(struct linux_binprm * bprm)
+ 	/* An exec changes our domain. We are no longer part of the thread
+ 	   group */
+ 	current->self_exec_id++;
++
+ 	flush_signal_handlers(current, 0);
+ 	do_close_on_exec(current->files);
+ }
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index 8372046..82aa2f4 100644
 --- a/fs/proc/meminfo.c
@@ -220,7 +238,7 @@ index 7ae216a..06861d8 100644
 +
  #endif /* __LINUX_KSM_H */
 diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index ca3e517..ae62e7d 100644
+index ca3e517..ae62e7d1 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -357,6 +357,9 @@ struct vm_area_struct {
@@ -258,7 +276,7 @@ index 02069c2..f7cce50 100644
   * @zone - pointer to struct zone variable
 diff --git a/include/linux/sradix-tree.h b/include/linux/sradix-tree.h
 new file mode 100644
-index 0000000..56775d2
+index 0000000..6780fdb
 --- /dev/null
 +++ b/include/linux/sradix-tree.h
 @@ -0,0 +1,77 @@
@@ -281,8 +299,8 @@ index 0000000..56775d2
 +
 +struct sradix_tree_node {
 +	unsigned int	height;		/* Height from the bottom */
-+	unsigned int	count;
-+	unsigned int	fulls;		/* Number of full sublevel trees */
++	unsigned int	count;		
++	unsigned int	fulls;		/* Number of full sublevel trees */ 
 +	struct sradix_tree_node *parent;
 +	void *stores[0];
 +};
@@ -302,7 +320,7 @@ index 0000000..56775d2
 +	//unsigned long *height_to_maxindex;
 +
 +	/* How the node is allocated and freed. */
-+	struct sradix_tree_node *(*alloc)(void);
++	struct sradix_tree_node *(*alloc)(void); 
 +	void (*free)(struct sradix_tree_node *node);
 +
 +	/* When a new node is added and removed */
@@ -316,7 +334,7 @@ index 0000000..56775d2
 +	int offset;
 +};
 +
-+static inline
++static inline 
 +void init_sradix_tree_root(struct sradix_tree_root *root, unsigned long shift)
 +{
 +	root->height = 0;
@@ -333,7 +351,7 @@ index 0000000..56775d2
 +
 +extern int sradix_tree_enter(struct sradix_tree_root *root, void **item, int num);
 +
-+extern void sradix_tree_delete_from_leaf(struct sradix_tree_root *root,
++extern void sradix_tree_delete_from_leaf(struct sradix_tree_root *root, 
 +			struct sradix_tree_node *node, unsigned long index);
 +
 +extern void *sradix_tree_lookup(struct sradix_tree_root *root, unsigned long index);
@@ -341,10 +359,10 @@ index 0000000..56775d2
 +#endif /* _LINUX_SRADIX_TREE_H */
 diff --git a/include/linux/uksm.h b/include/linux/uksm.h
 new file mode 100644
-index 0000000..206f109
+index 0000000..825f05e
 --- /dev/null
 +++ b/include/linux/uksm.h
-@@ -0,0 +1,146 @@
+@@ -0,0 +1,149 @@
 +#ifndef __LINUX_UKSM_H
 +#define __LINUX_UKSM_H
 +/*
@@ -385,6 +403,7 @@ index 0000000..206f109
 +	unsigned long fully_scanned_round;
 +	unsigned long dedup_num;
 +	unsigned long pages_scanned;
++	unsigned long this_sampled;
 +	unsigned long last_scanned;
 +	unsigned long pages_to_scan;
 +	struct scan_rung *rung;
@@ -430,12 +449,14 @@ index 0000000..206f109
 +
 +static inline int uksm_flags_can_scan(unsigned long vm_flags)
 +{
-+#ifndef VM_SAO
-+#define VM_SAO 0
++#ifdef VM_SAO
++		if (vm_flags & VM_SAO)
++			return 0;
 +#endif
++
 +	return !(vm_flags & (VM_PFNMAP | VM_IO  | VM_DONTEXPAND |
 +			     VM_HUGETLB | VM_MIXEDMAP | VM_SHARED
-+			     | VM_MAYSHARE | VM_GROWSUP | VM_GROWSDOWN | VM_SAO));
++			     | VM_MAYSHARE | VM_GROWSUP | VM_GROWSDOWN));
 +}
 +
 +static inline void uksm_vm_flags_mod(unsigned long *vm_flags_p)
@@ -492,7 +513,7 @@ index 0000000..206f109
 +#endif /* !CONFIG_UKSM */
 +#endif /* __LINUX_UKSM_H */
 diff --git a/kernel/fork.c b/kernel/fork.c
-index 4a7ec0c..60df3e2 100644
+index aea4f4d..f93e114 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -459,7 +459,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
@@ -528,7 +549,7 @@ index ff6a7a6..ac0bb55 100644
  	 flex_proportions.o ratelimit.o show_mem.o \
 diff --git a/lib/sradix-tree.c b/lib/sradix-tree.c
 new file mode 100644
-index 0000000..e854c43
+index 0000000..8d06329
 --- /dev/null
 +++ b/lib/sradix-tree.c
 @@ -0,0 +1,476 @@
@@ -542,7 +563,7 @@ index 0000000..e854c43
 +
 +static inline int sradix_node_full(struct sradix_tree_root *root, struct sradix_tree_node *node)
 +{
-+	return node->fulls == root->stores_size ||
++	return node->fulls == root->stores_size || 
 +		(node->height == 1 && node->count == root->stores_size);
 +}
 +
@@ -625,7 +646,7 @@ index 0000000..e854c43
 +	}
 +
 +	while (node) {
-+		offset = (index & root->mask) + 1;
++		offset = (index & root->mask) + 1;					
 +		for (;offset < root->stores_size; offset++) {
 +			item = node->stores[offset];
 +			if (item && (!iter || iter(item, node->height)))
@@ -733,7 +754,7 @@ index 0000000..e854c43
 +
 +	store = &node->stores[offset];
 +	for (i = 0, j = 0;
-+	      j < root->stores_size - node->count &&
++	      j < root->stores_size - node->count && 
 +	      i < root->stores_size - offset && j < num; i++) {
 +		if (!store[i]) {
 +			store[i] = item[j];
@@ -778,7 +799,7 @@ index 0000000..e854c43
 +/**
 + *	sradix_tree_shrink    -    shrink height of a sradix tree to minimal
 + *      @root		sradix tree root
-+ *
++ *  
 + */
 +static inline void sradix_tree_shrink(struct sradix_tree_root *root)
 +{
@@ -806,7 +827,7 @@ index 0000000..e854c43
 +/*
 + * Del the item on the known leaf node and index
 + */
-+void sradix_tree_delete_from_leaf(struct sradix_tree_root *root,
++void sradix_tree_delete_from_leaf(struct sradix_tree_root *root, 
 +				  struct sradix_tree_node *node, unsigned long index)
 +{
 +	unsigned int offset;
@@ -893,7 +914,7 @@ index 0000000..e854c43
 + * Return the item if it exists, otherwise create it in place
 + * and return the created item.
 + */
-+void *sradix_tree_lookup_create(struct sradix_tree_root *root,
++void *sradix_tree_lookup_create(struct sradix_tree_root *root, 
 +			unsigned long index, void *(*item_alloc)(void))
 +{
 +	unsigned int height, offset;
@@ -1060,7 +1081,7 @@ index 78c6f7d..7e7cd8a 100644
  obj-$(CONFIG_SLAB) += slab.o
  obj-$(CONFIG_SLUB) += slub.o
 diff --git a/mm/memory.c b/mm/memory.c
-index 9e04681..7cd779b 100644
+index 9e04681..02200d3 100644
 --- a/mm/memory.c
 +++ b/mm/memory.c
 @@ -124,6 +124,28 @@ unsigned long highest_memmap_pfn __read_mostly;
@@ -1092,11 +1113,19 @@ index 9e04681..7cd779b 100644
  /*
   * CONFIG_MMU architectures set up ZERO_PAGE in their paging_init()
   */
-@@ -905,6 +927,11 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+@@ -135,6 +157,7 @@ static int __init init_zero_pfn(void)
+ core_initcall(init_zero_pfn);
+ 
+ 
++
+ #if defined(SPLIT_RSS_COUNTING)
+ 
+ void sync_mm_rss(struct mm_struct *mm)
+@@ -905,6 +928,11 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
  		get_page(page);
  		page_dup_rmap(page, false);
  		rss[mm_counter(page)]++;
-+
++		
 +		/* Should return NULL in vm_normal_page() */
 +		uksm_bugon_zeropage(pte);
 +	} else {
@@ -1104,7 +1133,7 @@ index 9e04681..7cd779b 100644
  	}
  
  out_set_pte:
-@@ -1138,8 +1165,10 @@ again:
+@@ -1138,8 +1166,10 @@ again:
  			ptent = ptep_get_and_clear_full(mm, addr, pte,
  							tlb->fullmm);
  			tlb_remove_tlb_entry(tlb, pte, addr);
@@ -1116,7 +1145,7 @@ index 9e04681..7cd779b 100644
  
  			if (!PageAnon(page)) {
  				if (pte_dirty(ptent)) {
-@@ -1995,8 +2024,10 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
+@@ -1995,8 +2025,10 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
  			clear_page(kaddr);
  		kunmap_atomic(kaddr);
  		flush_dcache_page(dst);
@@ -1128,7 +1157,7 @@ index 9e04681..7cd779b 100644
  }
  
  static gfp_t __get_fault_gfp_mask(struct vm_area_struct *vma)
-@@ -2141,6 +2172,7 @@ static int wp_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -2141,6 +2173,7 @@ static int wp_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
  		new_page = alloc_zeroed_user_highpage_movable(vma, address);
  		if (!new_page)
  			goto oom;
@@ -1136,7 +1165,7 @@ index 9e04681..7cd779b 100644
  	} else {
  		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma, address);
  		if (!new_page)
-@@ -2166,7 +2198,9 @@ static int wp_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -2166,7 +2199,9 @@ static int wp_page_copy(struct mm_struct *mm, struct vm_area_struct *vma,
  						mm_counter_file(old_page));
  				inc_mm_counter_fast(mm, MM_ANONPAGES);
  			}
@@ -1147,7 +1176,7 @@ index 9e04681..7cd779b 100644
  		}
  		flush_cache_page(vma, address, pte_pfn(orig_pte));
 diff --git a/mm/mmap.c b/mm/mmap.c
-index de2c176..4894711 100644
+index de2c176..ce60715 100644
 --- a/mm/mmap.c
 +++ b/mm/mmap.c
 @@ -43,6 +43,7 @@
@@ -1183,7 +1212,15 @@ index de2c176..4894711 100644
  		if (end >= next->vm_end) {
  			/*
  			 * vma expands, overlapping all the next, and
-@@ -795,16 +804,22 @@ again:			remove_next = 1 + (end > next->vm_end);
+@@ -725,6 +734,7 @@ again:			remove_next = 1 + (end > next->vm_end);
+ 		end_changed = true;
+ 	}
+ 	vma->vm_pgoff = pgoff;
++
+ 	if (adjust_next) {
+ 		next->vm_start += adjust_next << PAGE_SHIFT;
+ 		next->vm_pgoff += adjust_next;
+@@ -795,16 +805,22 @@ again:			remove_next = 1 + (end > next->vm_end);
  		 * up the code too much to do both in one go.
  		 */
  		next = vma->vm_next;
@@ -1209,7 +1246,7 @@ index de2c176..4894711 100644
  	validate_mm(mm);
  
  	return 0;
-@@ -1196,6 +1211,9 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
+@@ -1196,6 +1212,9 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
  	vm_flags |= calc_vm_prot_bits(prot, pkey) | calc_vm_flag_bits(flags) |
  			mm->def_flags | VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC;
  
@@ -1219,7 +1256,7 @@ index de2c176..4894711 100644
  	if (flags & MAP_LOCKED)
  		if (!can_do_mlock())
  			return -EPERM;
-@@ -1534,6 +1552,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
+@@ -1534,6 +1553,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
  			allow_write_access(file);
  	}
  	file = vma->vm_file;
@@ -1227,7 +1264,7 @@ index de2c176..4894711 100644
  out:
  	perf_event_mmap(vma);
  
-@@ -1575,6 +1594,7 @@ allow_write_and_free_vma:
+@@ -1575,6 +1595,7 @@ allow_write_and_free_vma:
  	if (vm_flags & VM_DENYWRITE)
  		allow_write_access(file);
  free_vma:
@@ -1235,7 +1272,7 @@ index de2c176..4894711 100644
  	kmem_cache_free(vm_area_cachep, vma);
  unacct_error:
  	if (charged)
-@@ -2369,6 +2389,8 @@ static int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
+@@ -2369,6 +2390,8 @@ static int __split_vma(struct mm_struct *mm, struct vm_area_struct *vma,
  	else
  		err = vma_adjust(vma, vma->vm_start, addr, vma->vm_pgoff, new);
  
@@ -1244,7 +1281,7 @@ index de2c176..4894711 100644
  	/* Success. */
  	if (!err)
  		return 0;
-@@ -2639,6 +2661,7 @@ static int do_brk(unsigned long addr, unsigned long len)
+@@ -2639,6 +2662,7 @@ static int do_brk(unsigned long addr, unsigned long len)
  		return 0;
  
  	flags = VM_DATA_DEFAULT_FLAGS | VM_ACCOUNT | mm->def_flags;
@@ -1252,7 +1289,7 @@ index de2c176..4894711 100644
  
  	error = get_unmapped_area(NULL, addr, len, 0, MAP_FIXED);
  	if (offset_in_page(error))
-@@ -2696,6 +2719,7 @@ static int do_brk(unsigned long addr, unsigned long len)
+@@ -2696,6 +2720,7 @@ static int do_brk(unsigned long addr, unsigned long len)
  	vma->vm_flags = flags;
  	vma->vm_page_prot = vm_get_page_prot(flags);
  	vma_link(mm, vma, prev, rb_link, rb_parent);
@@ -1260,7 +1297,7 @@ index de2c176..4894711 100644
  out:
  	perf_event_mmap(vma);
  	mm->total_vm += len >> PAGE_SHIFT;
-@@ -2734,6 +2758,12 @@ void exit_mmap(struct mm_struct *mm)
+@@ -2734,6 +2759,12 @@ void exit_mmap(struct mm_struct *mm)
  	/* mm's last user has gone, and its about to be pulled down */
  	mmu_notifier_release(mm);
  
@@ -1273,7 +1310,7 @@ index de2c176..4894711 100644
  	if (mm->locked_vm) {
  		vma = mm->mmap;
  		while (vma) {
-@@ -2769,6 +2799,11 @@ void exit_mmap(struct mm_struct *mm)
+@@ -2769,6 +2800,11 @@ void exit_mmap(struct mm_struct *mm)
  		vma = remove_vma(vma);
  	}
  	vm_unacct_memory(nr_accounted);
@@ -1285,7 +1322,7 @@ index de2c176..4894711 100644
  }
  
  /* Insert vm structure into process list sorted by address
-@@ -2878,6 +2913,7 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
+@@ -2878,6 +2914,7 @@ struct vm_area_struct *copy_vma(struct vm_area_struct **vmap,
  			new_vma->vm_ops->open(new_vma);
  		vma_link(mm, new_vma, prev, rb_link, rb_parent);
  		*need_rmap_locks = false;
@@ -1293,7 +1330,7 @@ index de2c176..4894711 100644
  	}
  	return new_vma;
  
-@@ -3015,6 +3051,7 @@ static struct vm_area_struct *__install_special_mapping(
+@@ -3015,6 +3052,7 @@ static struct vm_area_struct *__install_special_mapping(
  	vm_stat_account(mm, vma->vm_flags, len >> PAGE_SHIFT);
  
  	perf_event_mmap(vma);
@@ -1319,10 +1356,10 @@ index 701b93f..64ba784 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..9364303
+index 0000000..039192f
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5525 @@
+@@ -0,0 +1,5518 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -2879,9 +2916,10 @@ index 0000000..9364303
 +
 +	/* special treatment is needed for zero_page */
 +	if ((page_to_pfn(kpage) == uksm_zero_pfn) ||
-+				(page_to_pfn(kpage) == zero_pfn))
++				(page_to_pfn(kpage) == zero_pfn)) {
 +		entry = pte_mkspecial(entry);
-+	else {
++		dec_mm_counter(mm, MM_ANONPAGES);
++	} else {
 +		get_page(kpage);
 +		page_add_anon_rmap(kpage, vma, addr, false);
 +	}
@@ -2966,47 +3004,6 @@ index 0000000..9364303
 +	return err;
 +}
 +
-+static struct page *page_trans_compound_anon(struct page *page)
-+{
-+	if (PageTransCompound(page)) {
-+		struct page *head = compound_head(page);
-+		/*
-+		 * head may actually be splitted and freed from under
-+		 * us but it's ok here.
-+		 */
-+		if (PageAnon(head))
-+			return head;
-+	}
-+	return NULL;
-+}
-+
-+static int page_trans_compound_anon_split(struct page *page)
-+{
-+	int ret = 0;
-+	struct page *transhuge_head = page_trans_compound_anon(page);
-+	if (transhuge_head) {
-+		/* Get the reference on the head to split it. */
-+		if (get_page_unless_zero(transhuge_head)) {
-+			/*
-+			 * Recheck we got the reference while the head
-+			 * was still anonymous.
-+			 */
-+			if (PageAnon(transhuge_head))
-+				ret = split_huge_page(transhuge_head);
-+			else
-+				/*
-+				 * Retry later if split_huge_page run
-+				 * from under us.
-+				 */
-+				ret = 1;
-+			put_page(transhuge_head);
-+		} else
-+			/* Retry later if split_huge_page run from under us. */
-+			ret = 1;
-+	}
-+	return ret;
-+}
-+
 +/**
 + * Try to merge a rmap_item.page with a kpage in stable node. kpage must
 + * already be a ksm page.
@@ -3032,13 +3029,6 @@ index 0000000..9364303
 +		goto out;
 +	}
 +
-+	if (PageTransCompound(page) && page_trans_compound_anon_split(page))
-+		goto out;
-+	BUG_ON(PageTransCompound(page));
-+
-+	if (!PageAnon(page) || !PageKsm(kpage))
-+		goto out;
-+
 +	/*
 +	 * We need the page lock to read a stable PageSwapCache in
 +	 * write_protect_page().  We use trylock_page() instead of
@@ -3048,6 +3038,16 @@ index 0000000..9364303
 +	 */
 +	if (!trylock_page(page))
 +		goto out;
++
++	if (!PageAnon(page) || !PageKsm(kpage))
++		goto out_unlock;
++
++	if (PageTransCompound(page)) {
++		err = split_huge_page(page);
++		if (err)
++			goto out_unlock;
++	}
++
 +	/*
 +	 * If this anonymous page is mapped only here, its pte may need
 +	 * to be write-protected.  If it's mapped elsewhere, all of its
@@ -3071,6 +3071,7 @@ index 0000000..9364303
 +		}
 +	}
 +
++out_unlock:
 +	unlock_page(page);
 +out:
 +	return err;
@@ -3159,20 +3160,17 @@ index 0000000..9364303
 +	if (rmap_item->page == tree_rmap_item->page)
 +		goto out;
 +
-+	if (PageTransCompound(page) && page_trans_compound_anon_split(page))
-+		goto out;
-+	BUG_ON(PageTransCompound(page));
-+
-+	if (PageTransCompound(tree_page) && page_trans_compound_anon_split(tree_page))
-+		goto out;
-+	BUG_ON(PageTransCompound(tree_page));
-+
-+	if (!PageAnon(page) || !PageAnon(tree_page))
-+		goto out;
-+
 +	if (!trylock_page(page))
 +		goto out;
 +
++	if (!PageAnon(page))
++		goto out_unlock;
++
++	if (PageTransCompound(page)) {
++		err = split_huge_page(page);
++		if (err)
++			goto out_unlock;
++	}
 +
 +	if (write_protect_page(vma1, page, &wprt_pte1, &orig_pte1) != 0) {
 +		unlock_page(page);
@@ -3187,10 +3185,26 @@ index 0000000..9364303
 +	saved_mapping = page->mapping;
 +	set_page_stable_node(page, NULL);
 +	mark_page_accessed(page);
++	if (!PageDirty(page))
++		SetPageDirty(page);
++
 +	unlock_page(page);
 +
 +	if (!trylock_page(tree_page))
 +		goto restore_out;
++
++	if (!PageAnon(tree_page)) {
++		unlock_page(tree_page);
++		goto restore_out;
++	}
++
++	if (PageTransCompound(tree_page)) {
++		err = split_huge_page(tree_page);
++		if (err) {
++			unlock_page(tree_page);
++			goto restore_out;
++		}
++	}
 +
 +	if (write_protect_page(vma2, tree_page, &wprt_pte2, &orig_pte2) != 0) {
 +		unlock_page(tree_page);
@@ -3239,6 +3253,7 @@ index 0000000..9364303
 +				  orig_pte1, wprt_pte1))
 +		page->mapping = saved_mapping;
 +
++out_unlock:
 +	unlock_page(page);
 +out:
 +	return err;
@@ -3952,7 +3967,7 @@ index 0000000..9364303
 +/*
 + * We use break_ksm to break COW on a ksm page: it's a stripped down
 + *
-+ *	if (get_user_pages(current, mm, addr, 1, 1, 1, &page, NULL) == 1)
++ *	if (get_user_pages(addr, 1, 1, 1, &page, NULL) == 1)
 + *		put_page(page);
 + *
 + * but taking great care only to touch a ksm page, in a VM_MERGEABLE vma,
@@ -3967,12 +3982,12 @@ index 0000000..9364303
 +
 +	do {
 +		cond_resched();
-+		page = follow_page(vma, addr, FOLL_GET);
++		page = follow_page(vma, addr, FOLL_GET | FOLL_MIGRATION | FOLL_REMOTE);
 +		if (IS_ERR_OR_NULL(page))
 +			break;
 +		if (PageKsm(page)) {
 +			ret = handle_mm_fault(vma->vm_mm, vma, addr,
-+					      FAULT_FLAG_WRITE);
++					      FAULT_FLAG_WRITE | FAULT_FLAG_REMOTE);
 +		} else
 +			ret = VM_FAULT_WRITE;
 +		put_page(page);
@@ -4092,21 +4107,24 @@ index 0000000..9364303
 +	if (uksm_test_exit(mm))
 +		goto out;
 +
-+	if (PageTransCompound(page) && page_trans_compound_anon_split(page))
-+		goto out;
-+	BUG_ON(PageTransCompound(page));
-+
-+	if (!PageAnon(page))
-+		goto out;
-+
 +	if (!trylock_page(page))
 +		goto out;
++
++	if (!PageAnon(page))
++		goto out_unlock;
++
++	if (PageTransCompound(page)) {
++		err = split_huge_page(page);
++		if (err)
++			goto out_unlock;
++	}
 +
 +	if (write_protect_page(vma, page, &orig_pte, 0) == 0) {
 +		if (is_page_full_zero(page))
 +			err = replace_page(vma, page, zero_page, orig_pte);
 +	}
 +
++out_unlock:
 +	unlock_page(page);
 +out:
 +	return err;
@@ -4598,7 +4616,7 @@ index 0000000..9364303
 +	if (IS_ERR_OR_NULL(page))
 +		goto nopage;
 +
-+	if (!PageAnon(page) && !page_trans_compound_anon(page))
++	if (!PageAnon(page))
 +		goto putpage;
 +
 +	/*check is zero_page pfn or uksm_zero_page*/
@@ -4617,7 +4635,6 @@ index 0000000..9364303
 +		if (!cmp_and_merge_zero_page(slot->vma, page)) {
 +			slot->pages_merged++;
 +			inc_zone_page_state(page, NR_UKSM_ZERO_PAGES);
-+			dec_mm_counter(slot->mm, MM_ANONPAGES);
 +
 +			/* For full-zero pages, no need to create rmap item */
 +			goto putpage;
@@ -4691,6 +4708,7 @@ index 0000000..9364303
 +	put_page(rmap_item->page);
 +out1:
 +	slot->pages_scanned++;
++	slot->this_sampled++;
 +	if (slot->fully_scanned_round != fully_scanned_round)
 +		scanned_virtual_pages++;
 +
@@ -4913,6 +4931,11 @@ index 0000000..9364303
 +static unsigned long cal_dedup_ratio(struct vma_slot *slot)
 +{
 +	unsigned long ret;
++	unsigned long pages;
++
++	pages = slot->this_sampled;
++	if (!pages)
++		return 0;
 +
 +	BUG_ON(slot->pages_scanned == slot->last_scanned);
 +
@@ -4928,7 +4951,7 @@ index 0000000..9364303
 +		}
 +	}
 +
-+	return ret;
++	return ret * 100 / pages;
 +}
 +
 +/**
@@ -4937,17 +4960,13 @@ index 0000000..9364303
 +static unsigned long cal_dedup_ratio_old(struct vma_slot *slot)
 +{
 +	unsigned long ret;
-+	unsigned long pages_scanned;
++	unsigned long pages;
 +
-+	pages_scanned = slot->pages_scanned;
-+	if (!pages_scanned) {
-+		if (uksm_thrash_threshold)
-+			return 0;
-+		else
-+			pages_scanned = slot->pages_scanned;
-+	}
++	pages = slot->pages;
++	if (!pages)
++		return 0;
 +
-+	ret = slot->pages_bemerged * 100 / pages_scanned;
++	ret = slot->pages_bemerged;
 +
 +	/* Thrashing area filtering */
 +	if (ret && uksm_thrash_threshold) {
@@ -4959,7 +4978,7 @@ index 0000000..9364303
 +		}
 +	}
 +
-+	return ret;
++	return ret * 100 / pages;
 +}
 +
 +/**
@@ -5709,9 +5728,11 @@ index 0000000..9364303
 +
 +	slot->pages_merged = 0;
 +	slot->pages_cowed = 0;
++	slot->this_sampled = 0;
 +
-+	if (vma_fully_scanned(slot))
++	if (vma_fully_scanned(slot)) {
 +		slot->pages_scanned = 0;
++	}
 +
 +	slot->last_scanned = slot->pages_scanned;
 +
@@ -5997,9 +6018,11 @@ index 0000000..9364303
 +			struct anon_vma_chain *vmac;
 +			struct vm_area_struct *vma;
 +
++			cond_resched();
 +			anon_vma_lock_read(anon_vma);
 +			anon_vma_interval_tree_foreach(vmac, &anon_vma->rb_root,
 +						       0, ULONG_MAX) {
++				cond_resched();
 +				vma = vmac->vma;
 +				address = get_rmap_addr(rmap_item);
 +
@@ -6415,8 +6438,9 @@ index 0000000..9364303
 +	unsigned long values[SCAN_LADDER_SIZE];
 +	struct scan_rung *rung;
 +	char *p, *end = NULL;
++	ssize_t ret = count;
 +
-+	p = kzalloc(count, GFP_KERNEL);
++	p = kzalloc(count + 2, GFP_KERNEL);
 +	if (!p)
 +		return -ENOMEM;
 +
@@ -6425,15 +6449,19 @@ index 0000000..9364303
 +	for (i = 0; i < SCAN_LADDER_SIZE; i++) {
 +		if (i != SCAN_LADDER_SIZE -1) {
 +			end = strchr(p, ' ');
-+			if (!end)
-+				return -EINVAL;
++			if (!end) {
++				ret = -EINVAL;
++				goto out;
++			}
 +
 +			*end = '\0';
 +		}
 +
 +		err = kstrtoul(p, 10, &values[i]);
-+		if (err)
-+			return -EINVAL;
++		if (err) {
++			ret = -EINVAL;
++			goto out;
++		}
 +
 +		p = end + 1;
 +	}
@@ -6444,7 +6472,9 @@ index 0000000..9364303
 +		rung->cover_msecs = values[i];
 +	}
 +
-+	return count;
++out:
++	kfree(p);
++	return ret;
 +}
 +UKSM_ATTR(eval_intervals);
 +

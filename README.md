@@ -1,7 +1,10 @@
-# UKSM
+# UKSM 
+----------------------------------------------------
+The patches in this repo are the latest UKSM patches
 
-UKSM developer Nai Xia is not active anymore and @pfactum abandoned the patchset due to lacking active maintainer.
-This is my attept to resync UKSM patchset to the latest stable kernels.
+The current release number: 0.1.2.5
+
+See Documentation/vm/uksm.txt for changelog
 
 # What is it?
 
@@ -14,6 +17,7 @@ This is an improvement upon KSM. Some basic data structures and routines
 are borrowed from ksm.c .
 
 Its new features:
+
 1. Full system scan:
      It automatically scans all user processes' anonymous VMAs. Kernel-user
      interaction to submit a memory area to KSM is no longer needed.
