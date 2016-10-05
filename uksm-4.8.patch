@@ -1081,10 +1081,10 @@ index 2ca1faf..980c8dd 100644
  obj-$(CONFIG_SLAB) += slab.o
  obj-$(CONFIG_SLUB) += slub.o
 diff --git a/mm/memory.c b/mm/memory.c
-index 793fe0f..f650cba 100644
+index 793fe0f..0464507 100644
 --- a/mm/memory.c
 +++ b/mm/memory.c
-@@ -124,6 +124,28 @@ unsigned long highest_memmap_pfn __read_mostly;
+@@ -124,6 +124,25 @@ unsigned long highest_memmap_pfn __read_mostly;
  
  EXPORT_SYMBOL(zero_pfn);
  
@@ -1095,14 +1095,11 @@ index 793fe0f..f650cba 100644
 +
 +static int __init setup_uksm_zero_page(void)
 +{
-+	unsigned long addr;
-+	addr = __get_free_pages(GFP_KERNEL | __GFP_ZERO, 0);
-+	if (!addr)
++	empty_uksm_zero_page = alloc_pages(__GFP_ZERO & ~__GFP_MOVABLE, 0);
++	if (!empty_uksm_zero_page)
 +		panic("Oh boy, that early out of memory?");
 +
-+	empty_uksm_zero_page = virt_to_page((void *) addr);
 +	SetPageReserved(empty_uksm_zero_page);
-+
 +	uksm_zero_pfn = page_to_pfn(empty_uksm_zero_page);
 +
 +	return 0;
@@ -1113,7 +1110,7 @@ index 793fe0f..f650cba 100644
  /*
   * CONFIG_MMU architectures set up ZERO_PAGE in their paging_init()
   */
-@@ -135,6 +157,7 @@ static int __init init_zero_pfn(void)
+@@ -135,6 +154,7 @@ static int __init init_zero_pfn(void)
  core_initcall(init_zero_pfn);
  
  
@@ -1121,7 +1118,7 @@ index 793fe0f..f650cba 100644
  #if defined(SPLIT_RSS_COUNTING)
  
  void sync_mm_rss(struct mm_struct *mm)
-@@ -914,6 +937,11 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
+@@ -914,6 +934,11 @@ copy_one_pte(struct mm_struct *dst_mm, struct mm_struct *src_mm,
  		get_page(page);
  		page_dup_rmap(page, false);
  		rss[mm_counter(page)]++;
@@ -1133,7 +1130,7 @@ index 793fe0f..f650cba 100644
  	}
  
  out_set_pte:
-@@ -1148,8 +1176,10 @@ again:
+@@ -1148,8 +1173,10 @@ again:
  			ptent = ptep_get_and_clear_full(mm, addr, pte,
  							tlb->fullmm);
  			tlb_remove_tlb_entry(tlb, pte, addr);
@@ -1145,7 +1142,7 @@ index 793fe0f..f650cba 100644
  
  			if (!PageAnon(page)) {
  				if (pte_dirty(ptent)) {
-@@ -2010,8 +2040,10 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
+@@ -2010,8 +2037,10 @@ static inline void cow_user_page(struct page *dst, struct page *src, unsigned lo
  			clear_page(kaddr);
  		kunmap_atomic(kaddr);
  		flush_dcache_page(dst);
@@ -1157,7 +1154,7 @@ index 793fe0f..f650cba 100644
  }
  
  static gfp_t __get_fault_gfp_mask(struct vm_area_struct *vma)
-@@ -2154,6 +2186,7 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
+@@ -2154,6 +2183,7 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
  		new_page = alloc_zeroed_user_highpage_movable(vma, fe->address);
  		if (!new_page)
  			goto oom;
@@ -1165,7 +1162,7 @@ index 793fe0f..f650cba 100644
  	} else {
  		new_page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
  				fe->address);
-@@ -2180,7 +2213,9 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
+@@ -2180,7 +2210,9 @@ static int wp_page_copy(struct fault_env *fe, pte_t orig_pte,
  						mm_counter_file(old_page));
  				inc_mm_counter_fast(mm, MM_ANONPAGES);
  			}
@@ -1176,7 +1173,7 @@ index 793fe0f..f650cba 100644
  		}
  		flush_cache_page(vma, fe->address, pte_pfn(orig_pte));
 diff --git a/mm/mmap.c b/mm/mmap.c
-index ca9d91b..015ebf4 100644
+index ca9d91b..cf565b7 100644
 --- a/mm/mmap.c
 +++ b/mm/mmap.c
 @@ -44,6 +44,7 @@
@@ -1199,11 +1196,11 @@ index ca9d91b..015ebf4 100644
  	long adjust_next = 0;
  	int remove_next = 0;
  
-+  /*
-+   * to avoid deadlock, ksm_remove_vma must be done before any spin_lock is
-+   * acquired
-+   */
-+   uksm_remove_vma(vma);
++/*
++ * to avoid deadlock, ksm_remove_vma must be done before any spin_lock is
++ * acquired
++ */
++	uksm_remove_vma(vma);
 +
  	if (next && !insert) {
  		struct vm_area_struct *exporter = NULL, *importer = NULL;
@@ -1226,16 +1223,18 @@ index ca9d91b..015ebf4 100644
  			end = next->vm_end;
 +			uksm_remove_vma(next);
  			goto again;
- 		}
- 		else if (next)
+-		}
+-		else if (next)
++		} else if (next) {
  			vma_gap_update(next);
- 		else
+-		else
++		} else {
  			mm->highest_vm_end = end;
--	}
++		}
 +	} else {
 +		if (next && !insert)
 +			uksm_vma_add_new(next);
-+    }
+ 	}
  	if (insert && file)
  		uprobe_mmap(insert);
  
@@ -1353,10 +1352,10 @@ index 1ef3640..1c40463 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..57ea0d3
+index 0000000..bef4a50
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5517 @@
+@@ -0,0 +1,5522 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -1555,7 +1554,8 @@ index 0000000..57ea0d3
 +static struct sradix_tree_node *slot_tree_node_alloc(void)
 +{
 +	struct slot_tree_node *p;
-+	p = kmem_cache_zalloc(slot_tree_node_cachep, GFP_KERNEL);
++	p = kmem_cache_zalloc(slot_tree_node_cachep, GFP_KERNEL |
++			      __GFP_NORETRY | __GFP_NOWARN);
 +	if (!p)
 +		return NULL;
 +
@@ -2041,7 +2041,8 @@ index 0000000..57ea0d3
 +static inline struct node_vma *alloc_node_vma(void)
 +{
 +	struct node_vma *node_vma;
-+	node_vma = kmem_cache_zalloc(node_vma_cache, GFP_KERNEL);
++	node_vma = kmem_cache_zalloc(node_vma_cache, GFP_KERNEL |
++				     __GFP_NORETRY | __GFP_NOWARN);
 +	if (node_vma) {
 +		INIT_HLIST_HEAD(&node_vma->rmap_hlist);
 +		INIT_HLIST_NODE(&node_vma->hlist);
@@ -2066,7 +2067,8 @@ index 0000000..57ea0d3
 +	if (!vma_slot_cache)
 +		return NULL;
 +
-+	slot = kmem_cache_zalloc(vma_slot_cache, GFP_KERNEL);
++	slot = kmem_cache_zalloc(vma_slot_cache, GFP_KERNEL |
++				 __GFP_NORETRY | __GFP_NOWARN);
 +	if (slot) {
 +		INIT_LIST_HEAD(&slot->slot_list);
 +		INIT_LIST_HEAD(&slot->dedup_list);
@@ -2086,7 +2088,8 @@ index 0000000..57ea0d3
 +{
 +	struct rmap_item *rmap_item;
 +
-+	rmap_item = kmem_cache_zalloc(rmap_item_cache, GFP_KERNEL);
++	rmap_item = kmem_cache_zalloc(rmap_item_cache, GFP_KERNEL |
++				      __GFP_NORETRY | __GFP_NOWARN);
 +	if (rmap_item) {
 +		/* bug on lowest bit is not clear for flag use */
 +		BUG_ON(is_addr(rmap_item));
@@ -2238,8 +2241,8 @@ index 0000000..57ea0d3
 +	void *expected_mapping;
 +
 +	page = pfn_to_page(stable_node->kpfn);
-+	expected_mapping = (void *)stable_node +
-+				(PAGE_MAPPING_ANON | PAGE_MAPPING_KSM);
++	expected_mapping = (void *)((unsigned long)stable_node |
++				    PAGE_MAPPING_KSM);
 +	rcu_read_lock();
 +	if (page->mapping != expected_mapping)
 +		goto stale;
@@ -2916,6 +2919,7 @@ index 0000000..57ea0d3
 +				(page_to_pfn(kpage) == zero_pfn)) {
 +		entry = pte_mkspecial(entry);
 +		dec_mm_counter(mm, MM_ANONPAGES);
++		inc_zone_page_state(page, NR_UKSM_ZERO_PAGES);
 +	} else {
 +		get_page(kpage);
 +		page_add_anon_rmap(kpage, vma, addr, false);
@@ -3983,7 +3987,8 @@ index 0000000..57ea0d3
 +		if (IS_ERR_OR_NULL(page))
 +			break;
 +		if (PageKsm(page)) {
-+			ret = handle_mm_fault(vma, addr, FAULT_FLAG_WRITE | FAULT_FLAG_REMOTE);
++			ret = handle_mm_fault(vma, addr,
++					      FAULT_FLAG_WRITE | FAULT_FLAG_REMOTE);
 +		} else
 +			ret = VM_FAULT_WRITE;
 +		put_page(page);
@@ -4630,7 +4635,6 @@ index 0000000..57ea0d3
 +	if (find_zero_page_hash(hash_strength, *hash)) {
 +		if (!cmp_and_merge_zero_page(slot->vma, page)) {
 +			slot->pages_merged++;
-+			inc_zone_page_state(page, NR_UKSM_ZERO_PAGES);
 +
 +			/* For full-zero pages, no need to create rmap item */
 +			goto putpage;
