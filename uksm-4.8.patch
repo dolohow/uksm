@@ -1352,10 +1352,10 @@ index 1ef3640..1c40463 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..bef4a50
+index 0000000..56852a5
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5522 @@
+@@ -0,0 +1,5524 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -2106,7 +2106,8 @@ index 0000000..bef4a50
 +static inline struct stable_node *alloc_stable_node(void)
 +{
 +	struct stable_node *node;
-+	node = kmem_cache_alloc(stable_node_cache, GFP_KERNEL | GFP_ATOMIC);
++	node = kmem_cache_alloc(stable_node_cache, GFP_KERNEL |
++				__GFP_NORETRY | __GFP_NOWARN);
 +	if (!node)
 +		return NULL;
 +
@@ -2124,7 +2125,8 @@ index 0000000..bef4a50
 +static inline struct tree_node *alloc_tree_node(struct list_head *list)
 +{
 +	struct tree_node *node;
-+	node = kmem_cache_zalloc(tree_node_cache, GFP_KERNEL | GFP_ATOMIC);
++	node = kmem_cache_zalloc(tree_node_cache, GFP_KERNEL |
++				 __GFP_NORETRY | __GFP_NOWARN);
 +	if (!node)
 +		return NULL;
 +
