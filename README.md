@@ -6,12 +6,14 @@ The current release number: 0.1.2.5
 
 See Documentation/vm/uksm.txt for changelog
 
+For more information like performance results please go to [project website](http://kerneldedup.org)
+
 # What is it?
 
 The Ultra Kernel Samepage Merging feature
 ----------------------------------------------
 
-Ultra KSM. Copyright (C) 2011-2012 Nai Xia
+Ultra KSM. Copyright (C) 2011-2016 Nai Xia
 
 This is an improvement upon KSM. Some basic data structures and routines
 are borrowed from ksm.c .
@@ -56,4 +58,4 @@ Its new features:
 
 # Credits
 
-Ultra KSM. Copyright (C) 2011-2012 Nai Xia
+Ultra KSM. Copyright (C) 2011-2016 Nai Xia
