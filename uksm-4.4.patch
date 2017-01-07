@@ -81,23 +81,14 @@ diff --git a/fs/exec.c b/fs/exec.c
 index b06623a..0755b66 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
-@@ -19,7 +19,7 @@
-  * current->executable is only used by the procfs.  This allows a dispatch
-  * table to check for several different types  of binary formats.  We keep
-  * trying until we recognize the file or we run out of supported binary
-- * formats. 
-+ * formats.
-  */
- 
- #include <linux/slab.h>
-@@ -56,6 +56,7 @@
- #include <linux/pipe_fs_i.h>
- #include <linux/oom.h>
- #include <linux/compat.h>
+@@ -38,6 +38,7 @@
+ #include <linux/spinlock.h>
+ #include <linux/key.h>
+ #include <linux/personality.h>
 +#include <linux/ksm.h>
- 
- #include <asm/uaccess.h>
- #include <asm/mmu_context.h>
+ #include <linux/binfmts.h>
+ #include <linux/utsname.h>
+ #include <linux/pid_namespace.h>
 @@ -1162,6 +1163,7 @@ void setup_new_exec(struct linux_binprm * bprm)
  	/* An exec changes our domain. We are no longer part of the thread
  	   group */
