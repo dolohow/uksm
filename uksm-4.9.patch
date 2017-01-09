@@ -81,15 +81,6 @@ diff --git a/fs/exec.c b/fs/exec.c
 index 4e497b9ee71e..34697ca4cd83 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
-@@ -19,7 +19,7 @@
-  * current->executable is only used by the procfs.  This allows a dispatch
-  * table to check for several different types  of binary formats.  We keep
-  * trying until we recognize the file or we run out of supported binary
-- * formats. 
-+ * formats.
-  */
- 
- #include <linux/slab.h>
 @@ -57,6 +57,7 @@
  #include <linux/oom.h>
  #include <linux/compat.h>
@@ -98,14 +89,6 @@ index 4e497b9ee71e..34697ca4cd83 100644
  
  #include <asm/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1314,6 +1315,7 @@ void setup_new_exec(struct linux_binprm * bprm)
- 	/* An exec changes our domain. We are no longer part of the thread
- 	   group */
- 	current->self_exec_id++;
-+
- 	flush_signal_handlers(current, 0);
- 	do_close_on_exec(current->files);
- }
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index 8a428498d6b2..47480dd3520a 100644
 --- a/fs/proc/meminfo.c
