@@ -3,6 +3,7 @@
 The patches in this repo are the latest UKSM patches
 
 The current release number: 0.1.2.6
+
 This release includes two bug fixes from Huawei, many thanks to their engineers and esepcially to @colo-ft who submitted the patches.
 
 Changelog for all versions is in Documentation/vm/uksm.txt. 
