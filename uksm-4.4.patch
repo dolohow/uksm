@@ -13,10 +13,10 @@ index 6a5e2a1..09eaa9a1 100644
  numa_memory_policy.txt
 diff --git a/Documentation/vm/uksm.txt b/Documentation/vm/uksm.txt
 new file mode 100644
-index 0000000..8fce86f
+index 0000000..b7a110f
 --- /dev/null
 +++ b/Documentation/vm/uksm.txt
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,61 @@
 +The Ultra Kernel Samepage Merging feature
 +----------------------------------------------
 +/*
@@ -77,8 +77,9 @@ index 0000000..8fce86f
 +2014-07-02 UKSM 0.1.2.3 Fix a " __this_cpu_read() in preemptible bug".
 +2015-04-22 UKSM 0.1.2.4 Fix a race condition that can sometimes trigger anonying warnings.
 +2016-09-10 UKSM 0.1.2.5 Fix a bug in dedup ratio calculation.
++2017-02-26 UKSM 0.1.2.6 Fix a bug in hugetlbpage handling and a race bug with page migration. 
 diff --git a/fs/exec.c b/fs/exec.c
-index b06623a..0755b66 100644
+index 3a6de10..18c4dee 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
 @@ -38,6 +38,7 @@
@@ -89,14 +90,14 @@ index b06623a..0755b66 100644
  #include <linux/binfmts.h>
  #include <linux/utsname.h>
  #include <linux/pid_namespace.h>
-@@ -1162,6 +1163,7 @@ void setup_new_exec(struct linux_binprm * bprm)
+@@ -1183,6 +1184,7 @@ void setup_new_exec(struct linux_binprm * bprm)
  	/* An exec changes our domain. We are no longer part of the thread
  	   group */
  	current->self_exec_id++;
 +
  	flush_signal_handlers(current, 0);
- 	do_close_on_exec(current->files);
  }
+ EXPORT_SYMBOL(setup_new_exec);
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index 9155a5a..ae836fb 100644
 --- a/fs/proc/meminfo.c
@@ -229,7 +230,7 @@ index 7ae216a..06861d8 100644
 +
  #endif /* __LINUX_KSM_H */
 diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index f8d1492..c5b4c6b 100644
+index 2ccccbf..7cff5e2 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -355,6 +355,9 @@ struct vm_area_struct {
@@ -502,7 +503,7 @@ index 0000000..a8d201ae
 +#endif /* !CONFIG_UKSM */
 +#endif /* __LINUX_UKSM_H */
 diff --git a/kernel/fork.c b/kernel/fork.c
-index c485cb1..8e4ca98 100644
+index 2e55b53..72ae226 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -445,7 +445,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
@@ -1349,10 +1350,10 @@ index b577fbb..c0d802a 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..5938dea
+index 0000000..a215639
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5538 @@
+@@ -0,0 +1,5565 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -2232,11 +2233,14 @@ index 0000000..5938dea
 +{
 +	struct page *page;
 +	void *expected_mapping;
++	unsigned long kpfn;
 +
-+	page = pfn_to_page(stable_node->kpfn);
++again:
++	kpfn = stable_node->kpfn;
++	page = pfn_to_page(kpfn);
 +	expected_mapping = (void *)stable_node +
 +				(PAGE_MAPPING_ANON | PAGE_MAPPING_KSM);
-+	rcu_read_lock();
++
 +	if (page->mapping != expected_mapping)
 +		goto stale;
 +	if (!get_page_unless_zero(page))
@@ -2245,10 +2249,26 @@ index 0000000..5938dea
 +		put_page(page);
 +		goto stale;
 +	}
-+	rcu_read_unlock();
++
++	lock_page(page);
++	if (page->mapping != expected_mapping) {
++		unlock_page(page);
++		put_page(page);
++		goto stale;
++	}
++	unlock_page(page);
 +	return page;
 +stale:
-+	rcu_read_unlock();
++	/*
++	 * We come here from above when page->mapping or !PageSwapCache
++	 * suggests that the node is stale; but it might be under migration.
++	 * We need smp_rmb(), matching the smp_wmb() in ksm_migrate_page(),
++	 * before checking whether node->kpfn has been changed.
++	 */
++	smp_rmb();
++	if (stable_node->kpfn != kpfn)
++		goto again;
++
 +	remove_node_from_stable_tree(stable_node, unlink_rb, remove_tree_node);
 +
 +	return NULL;
@@ -6084,6 +6104,14 @@ index 0000000..5938dea
 +	if (stable_node) {
 +		VM_BUG_ON(stable_node->kpfn != page_to_pfn(oldpage));
 +		stable_node->kpfn = page_to_pfn(newpage);
++		/*
++		 * newpage->mapping was set in advance; now we need smp_wmb()
++		 * to make sure that the new stable_node->kpfn is visible
++		 * to get_ksm_page() before it can see that oldpage->mapping
++		 * has gone stale (or that PageSwapCache has been cleared).
++		 */
++		smp_wmb();
++		set_page_stable_node(oldpage, NULL);
 +	}
 +}
 +#endif /* CONFIG_MIGRATION */

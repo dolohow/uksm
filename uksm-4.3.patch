@@ -13,10 +13,10 @@ index 6a5e2a1..09eaa9a1 100644
  numa_memory_policy.txt
 diff --git a/Documentation/vm/uksm.txt b/Documentation/vm/uksm.txt
 new file mode 100644
-index 0000000..8fce86f
+index 0000000..b7a110f
 --- /dev/null
 +++ b/Documentation/vm/uksm.txt
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,61 @@
 +The Ultra Kernel Samepage Merging feature
 +----------------------------------------------
 +/*
@@ -77,6 +77,7 @@ index 0000000..8fce86f
 +2014-07-02 UKSM 0.1.2.3 Fix a " __this_cpu_read() in preemptible bug".
 +2015-04-22 UKSM 0.1.2.4 Fix a race condition that can sometimes trigger anonying warnings.
 +2016-09-10 UKSM 0.1.2.5 Fix a bug in dedup ratio calculation.
++2017-02-26 UKSM 0.1.2.6 Fix a bug in hugetlbpage handling and a race bug with page migration. 
 diff --git a/fs/exec.c b/fs/exec.c
 index b06623a..0755b66 100644
 --- a/fs/exec.c
@@ -1358,10 +1359,10 @@ index f5b5c1f..b8fb8d8e 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..5938dea
+index 0000000..a215639
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5538 @@
+@@ -0,0 +1,5565 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -2241,11 +2242,14 @@ index 0000000..5938dea
 +{
 +	struct page *page;
 +	void *expected_mapping;
++	unsigned long kpfn;
 +
-+	page = pfn_to_page(stable_node->kpfn);
++again:
++	kpfn = stable_node->kpfn;
++	page = pfn_to_page(kpfn);
 +	expected_mapping = (void *)stable_node +
 +				(PAGE_MAPPING_ANON | PAGE_MAPPING_KSM);
-+	rcu_read_lock();
++
 +	if (page->mapping != expected_mapping)
 +		goto stale;
 +	if (!get_page_unless_zero(page))
@@ -2254,10 +2258,26 @@ index 0000000..5938dea
 +		put_page(page);
 +		goto stale;
 +	}
-+	rcu_read_unlock();
++
++	lock_page(page);
++	if (page->mapping != expected_mapping) {
++		unlock_page(page);
++		put_page(page);
++		goto stale;
++	}
++	unlock_page(page);
 +	return page;
 +stale:
-+	rcu_read_unlock();
++	/*
++	 * We come here from above when page->mapping or !PageSwapCache
++	 * suggests that the node is stale; but it might be under migration.
++	 * We need smp_rmb(), matching the smp_wmb() in ksm_migrate_page(),
++	 * before checking whether node->kpfn has been changed.
++	 */
++	smp_rmb();
++	if (stable_node->kpfn != kpfn)
++		goto again;
++
 +	remove_node_from_stable_tree(stable_node, unlink_rb, remove_tree_node);
 +
 +	return NULL;
@@ -6093,6 +6113,14 @@ index 0000000..5938dea
 +	if (stable_node) {
 +		VM_BUG_ON(stable_node->kpfn != page_to_pfn(oldpage));
 +		stable_node->kpfn = page_to_pfn(newpage);
++		/*
++		 * newpage->mapping was set in advance; now we need smp_wmb()
++		 * to make sure that the new stable_node->kpfn is visible
++		 * to get_ksm_page() before it can see that oldpage->mapping
++		 * has gone stale (or that PageSwapCache has been cleared).
++		 */
++		smp_wmb();
++		set_page_stable_node(oldpage, NULL);
 +	}
 +}
 +#endif /* CONFIG_MIGRATION */

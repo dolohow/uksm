@@ -13,10 +13,10 @@ index 6a5e2a1..09eaa9a1 100644
  numa_memory_policy.txt
 diff --git a/Documentation/vm/uksm.txt b/Documentation/vm/uksm.txt
 new file mode 100644
-index 0000000..8fce86f
+index 0000000..b7a110f
 --- /dev/null
 +++ b/Documentation/vm/uksm.txt
-@@ -0,0 +1,60 @@
+@@ -0,0 +1,61 @@
 +The Ultra Kernel Samepage Merging feature
 +----------------------------------------------
 +/*
@@ -77,19 +77,11 @@ index 0000000..8fce86f
 +2014-07-02 UKSM 0.1.2.3 Fix a " __this_cpu_read() in preemptible bug".
 +2015-04-22 UKSM 0.1.2.4 Fix a race condition that can sometimes trigger anonying warnings.
 +2016-09-10 UKSM 0.1.2.5 Fix a bug in dedup ratio calculation.
++2017-02-26 UKSM 0.1.2.6 Fix a bug in hugetlbpage handling and a race bug with page migration. 
 diff --git a/fs/exec.c b/fs/exec.c
-index 6fcfb3f..ef87e0f 100644
+index eebe8be..22e39c7 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
-@@ -19,7 +19,7 @@
-  * current->executable is only used by the procfs.  This allows a dispatch
-  * table to check for several different types  of binary formats.  We keep
-  * trying until we recognize the file or we run out of supported binary
-- * formats. 
-+ * formats.
-  */
- 
- #include <linux/slab.h>
 @@ -57,6 +57,7 @@
  #include <linux/oom.h>
  #include <linux/compat.h>
@@ -98,14 +90,14 @@ index 6fcfb3f..ef87e0f 100644
  
  #include <asm/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1309,6 +1310,7 @@ void setup_new_exec(struct linux_binprm * bprm)
+@@ -1329,6 +1330,7 @@ void setup_new_exec(struct linux_binprm * bprm)
  	/* An exec changes our domain. We are no longer part of the thread
  	   group */
  	current->self_exec_id++;
 +
  	flush_signal_handlers(current, 0);
- 	do_close_on_exec(current->files);
  }
+ EXPORT_SYMBOL(setup_new_exec);
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index b9a8c81..9765269 100644
 --- a/fs/proc/meminfo.c
@@ -238,7 +230,7 @@ index 481c8c4..5329b23 100644
 +
  #endif /* __LINUX_KSM_H */
 diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index 903200f..6c7d900 100644
+index 3982008..4043a30 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -358,6 +358,9 @@ struct vm_area_struct {
@@ -513,7 +505,7 @@ index 0000000..825f05e
 +#endif /* !CONFIG_UKSM */
 +#endif /* __LINUX_UKSM_H */
 diff --git a/kernel/fork.c b/kernel/fork.c
-index beb3172..569893a 100644
+index 9f8dae7..75a0271 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -457,7 +457,7 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
@@ -1067,10 +1059,10 @@ index be0ee11..64fd3bc 100644
  config DEFAULT_MMAP_MIN_ADDR
          int "Low address space to protect from user allocation"
 diff --git a/mm/Makefile b/mm/Makefile
-index 2ca1faf..980c8dd 100644
+index 295bd7a..a47ed9b 100644
 --- a/mm/Makefile
 +++ b/mm/Makefile
-@@ -66,7 +66,8 @@ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
+@@ -63,7 +63,8 @@ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
  obj-$(CONFIG_SPARSEMEM_VMEMMAP) += sparse-vmemmap.o
  obj-$(CONFIG_SLOB) += slob.o
  obj-$(CONFIG_MMU_NOTIFIER) += mmu_notifier.o
@@ -1352,10 +1344,10 @@ index 1ef3640..1c40463 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 0000000..56852a5
+index 0000000..40f947c
 --- /dev/null
 +++ b/mm/uksm.c
-@@ -0,0 +1,5524 @@
+@@ -0,0 +1,5580 @@
 +/*
 + * Ultra KSM. Copyright (C) 2011-2012 Nai Xia
 + *
@@ -2241,23 +2233,71 @@ index 0000000..56852a5
 +{
 +	struct page *page;
 +	void *expected_mapping;
++	unsigned long kpfn;
 +
-+	page = pfn_to_page(stable_node->kpfn);
 +	expected_mapping = (void *)((unsigned long)stable_node |
 +				    PAGE_MAPPING_KSM);
-+	rcu_read_lock();
-+	if (page->mapping != expected_mapping)
++again:
++	kpfn = READ_ONCE(stable_node->kpfn);
++	page = pfn_to_page(kpfn);
++
++	/*
++	 * page is computed from kpfn, so on most architectures reading
++	 * page->mapping is naturally ordered after reading node->kpfn,
++	 * but on Alpha we need to be more careful.
++	 */
++	smp_read_barrier_depends();
++
++	if (READ_ONCE(page->mapping) != expected_mapping)
 +		goto stale;
-+	if (!get_page_unless_zero(page))
-+		goto stale;
-+	if (page->mapping != expected_mapping) {
++
++	/*
++	 * We cannot do anything with the page while its refcount is 0.
++	 * Usually 0 means free, or tail of a higher-order page: in which
++	 * case this node is no longer referenced, and should be freed;
++	 * however, it might mean that the page is under page_freeze_refs().
++	 * The __remove_mapping() case is easy, again the node is now stale;
++	 * but if page is swapcache in migrate_page_move_mapping(), it might
++	 * still be our page, in which case it's essential to keep the node.
++	 */
++	while (!get_page_unless_zero(page)) {
++		/*
++		 * Another check for page->mapping != expected_mapping would
++		 * work here too.  We have chosen the !PageSwapCache test to
++		 * optimize the common case, when the page is or is about to
++		 * be freed: PageSwapCache is cleared (under spin_lock_irq)
++		 * in the freeze_refs section of __remove_mapping(); but Anon
++		 * page->mapping reset to NULL later, in free_pages_prepare().
++		 */
++		if (!PageSwapCache(page))
++			goto stale;
++		cpu_relax();
++	}
++
++	if (READ_ONCE(page->mapping) != expected_mapping) {
 +		put_page(page);
 +		goto stale;
 +	}
-+	rcu_read_unlock();
++
++	lock_page(page);
++	if (READ_ONCE(page->mapping) != expected_mapping) {
++		unlock_page(page);
++		put_page(page);
++		goto stale;
++	}
++	unlock_page(page);
 +	return page;
 +stale:
-+	rcu_read_unlock();
++	/*
++	 * We come here from above when page->mapping or !PageSwapCache
++	 * suggests that the node is stale; but it might be under migration.
++	 * We need smp_rmb(), matching the smp_wmb() in ksm_migrate_page(),
++	 * before checking whether node->kpfn has been changed.
++	 */
++	smp_rmb();
++	if (stable_node->kpfn != kpfn)
++		goto again;
++
 +	remove_node_from_stable_tree(stable_node, unlink_rb, remove_tree_node);
 +
 +	return NULL;
@@ -6073,6 +6113,14 @@ index 0000000..56852a5
 +	if (stable_node) {
 +		VM_BUG_ON(stable_node->kpfn != page_to_pfn(oldpage));
 +		stable_node->kpfn = page_to_pfn(newpage);
++		/*
++		 * newpage->mapping was set in advance; now we need smp_wmb()
++		 * to make sure that the new stable_node->kpfn is visible
++		 * to get_ksm_page() before it can see that oldpage->mapping
++		 * has gone stale (or that PageSwapCache has been cleared).
++		 */
++		smp_wmb();
++		set_page_stable_node(oldpage, NULL);
 +	}
 +}
 +#endif /* CONFIG_MIGRATION */
