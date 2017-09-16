@@ -1,5 +1,5 @@
 diff --git a/Documentation/vm/00-INDEX b/Documentation/vm/00-INDEX
-index 11d3d8dcb449..5269998fef8a 100644
+index 11d3d8d..5269998 100644
 --- a/Documentation/vm/00-INDEX
 +++ b/Documentation/vm/00-INDEX
 @@ -20,6 +20,8 @@ idle_page_tracking.txt
@@ -13,7 +13,7 @@ index 11d3d8dcb449..5269998fef8a 100644
  numa_memory_policy.txt
 diff --git a/Documentation/vm/uksm.txt b/Documentation/vm/uksm.txt
 new file mode 100644
-index 000000000000..b7a110ff8121
+index 0000000..b7a110f
 --- /dev/null
 +++ b/Documentation/vm/uksm.txt
 @@ -0,0 +1,61 @@
@@ -79,7 +79,7 @@ index 000000000000..b7a110ff8121
 +2016-09-10 UKSM 0.1.2.5 Fix a bug in dedup ratio calculation.
 +2017-02-26 UKSM 0.1.2.6 Fix a bug in hugetlbpage handling and a race bug with page migration. 
 diff --git a/fs/exec.c b/fs/exec.c
-index 62175cbcc801..f912649957b7 100644
+index 62175cb..f912649 100644
 --- a/fs/exec.c
 +++ b/fs/exec.c
 @@ -62,6 +62,7 @@
@@ -99,7 +99,7 @@ index 62175cbcc801..f912649957b7 100644
  }
  EXPORT_SYMBOL(setup_new_exec);
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
-index 509a61668d90..dcfd57010977 100644
+index 509a616..dcfd570 100644
 --- a/fs/proc/meminfo.c
 +++ b/fs/proc/meminfo.c
 @@ -117,6 +117,10 @@ static int meminfo_proc_show(struct seq_file *m, void *v)
@@ -114,7 +114,7 @@ index 509a61668d90..dcfd57010977 100644
  	show_val_kb(m, "Quicklists:     ", quicklist_total_size());
  #endif
 diff --git a/include/asm-generic/pgtable.h b/include/asm-generic/pgtable.h
-index 7dfa767dc680..22f040a366ff 100644
+index 7dfa767..22f040a 100644
 --- a/include/asm-generic/pgtable.h
 +++ b/include/asm-generic/pgtable.h
 @@ -729,12 +729,25 @@ extern void untrack_pfn(struct vm_area_struct *vma, unsigned long pfn,
@@ -154,7 +154,7 @@ index 7dfa767dc680..22f040a366ff 100644
  
  static inline unsigned long my_zero_pfn(unsigned long addr)
 diff --git a/include/linux/ksm.h b/include/linux/ksm.h
-index 78b44a024eaa..3138abdfa1dd 100644
+index 78b44a0..3138abd 100644
 --- a/include/linux/ksm.h
 +++ b/include/linux/ksm.h
 @@ -20,21 +20,6 @@ struct mem_cgroup;
@@ -221,7 +221,7 @@ index 78b44a024eaa..3138abdfa1dd 100644
 +
  #endif /* __LINUX_KSM_H */
 diff --git a/include/linux/mm_types.h b/include/linux/mm_types.h
-index 3cadee0a3508..26df1d214a67 100644
+index 3cadee0..26df1d2 100644
 --- a/include/linux/mm_types.h
 +++ b/include/linux/mm_types.h
 @@ -342,6 +342,9 @@ struct vm_area_struct {
@@ -234,26 +234,8 @@ index 3cadee0a3508..26df1d214a67 100644
  } __randomize_layout;
  
  struct core_thread {
-diff --git a/include/linux/mm_types.h.rej b/include/linux/mm_types.h.rej
-new file mode 100644
-index 000000000000..1c864c79ebeb
---- /dev/null
-+++ b/include/linux/mm_types.h.rej
-@@ -0,0 +1,12 @@
-+--- include/linux/mm_types.h
-++++ include/linux/mm_types.h
-+@@ -342,6 +342,9 @@ struct vm_area_struct {
-+ 	struct mempolicy *vm_policy;	/* NUMA policy for the VMA */
-+ #endif
-+ 	struct vm_userfaultfd_ctx vm_userfaultfd_ctx;
-++#ifdef CONFIG_UKSM
-++	struct vma_slot *uksm_vma_slot;
-++#endif
-+ };
-+ 
-+ struct core_thread {
 diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
-index fc14b8b3f6ce..f6856cb1d841 100644
+index fc14b8b..f6856cb 100644
 --- a/include/linux/mmzone.h
 +++ b/include/linux/mmzone.h
 @@ -141,6 +141,9 @@ enum zone_stat_item {
@@ -277,7 +259,7 @@ index fc14b8b3f6ce..f6856cb1d841 100644
   * @zone - pointer to struct zone variable
 diff --git a/include/linux/sradix-tree.h b/include/linux/sradix-tree.h
 new file mode 100644
-index 000000000000..6780fdb0a7af
+index 0000000..6780fdb
 --- /dev/null
 +++ b/include/linux/sradix-tree.h
 @@ -0,0 +1,77 @@
@@ -360,7 +342,7 @@ index 000000000000..6780fdb0a7af
 +#endif /* _LINUX_SRADIX_TREE_H */
 diff --git a/include/linux/uksm.h b/include/linux/uksm.h
 new file mode 100644
-index 000000000000..825f05e0e498
+index 0000000..825f05e
 --- /dev/null
 +++ b/include/linux/uksm.h
 @@ -0,0 +1,149 @@
@@ -514,7 +496,7 @@ index 000000000000..825f05e0e498
 +#endif /* !CONFIG_UKSM */
 +#endif /* __LINUX_UKSM_H */
 diff --git a/kernel/fork.c b/kernel/fork.c
-index b7e9e57b71ea..abf1dbd94231 100644
+index b7e9e57..abf1dbd 100644
 --- a/kernel/fork.c
 +++ b/kernel/fork.c
 @@ -642,7 +642,7 @@ static __latent_entropy int dup_mmap(struct mm_struct *mm,
@@ -536,7 +518,7 @@ index b7e9e57b71ea..abf1dbd94231 100644
  		retval = copy_page_range(mm, oldmm, mpnt);
  
 diff --git a/lib/Makefile b/lib/Makefile
-index 40c18372b301..e43cedb2191f 100644
+index 40c1837..e43cedb 100644
 --- a/lib/Makefile
 +++ b/lib/Makefile
 @@ -17,7 +17,7 @@ KCOV_INSTRUMENT_debugobjects.o := n
@@ -550,7 +532,7 @@ index 40c18372b301..e43cedb2191f 100644
  	 flex_proportions.o ratelimit.o show_mem.o \
 diff --git a/lib/sradix-tree.c b/lib/sradix-tree.c
 new file mode 100644
-index 000000000000..8d0632917e8b
+index 0000000..8d06329
 --- /dev/null
 +++ b/lib/sradix-tree.c
 @@ -0,0 +1,476 @@
@@ -1031,7 +1013,7 @@ index 000000000000..8d0632917e8b
 +	return 0;
 +}
 diff --git a/mm/Kconfig b/mm/Kconfig
-index 48b1af447fa7..ab12e4f62453 100644
+index 48b1af4..ab12e4f 100644
 --- a/mm/Kconfig
 +++ b/mm/Kconfig
 @@ -312,6 +312,32 @@ config KSM
@@ -1068,7 +1050,7 @@ index 48b1af447fa7..ab12e4f62453 100644
  config DEFAULT_MMAP_MIN_ADDR
          int "Low address space to protect from user allocation"
 diff --git a/mm/Makefile b/mm/Makefile
-index 411bd24d4a7c..d897f8dff51a 100644
+index 411bd24..d897f8d 100644
 --- a/mm/Makefile
 +++ b/mm/Makefile
 @@ -65,7 +65,8 @@ obj-$(CONFIG_SPARSEMEM)	+= sparse.o
@@ -1082,7 +1064,7 @@ index 411bd24d4a7c..d897f8dff51a 100644
  obj-$(CONFIG_SLAB) += slab.o
  obj-$(CONFIG_SLUB) += slub.o
 diff --git a/mm/memory.c b/mm/memory.c
-index 56e48e4593cb..bac026e5ebea 100644
+index 56e48e4..bac026e 100644
 --- a/mm/memory.c
 +++ b/mm/memory.c
 @@ -128,6 +128,25 @@ EXPORT_SYMBOL(zero_pfn);
@@ -1174,7 +1156,7 @@ index 56e48e4593cb..bac026e5ebea 100644
  		}
  		flush_cache_page(vma, vmf->address, pte_pfn(vmf->orig_pte));
 diff --git a/mm/mmap.c b/mm/mmap.c
-index f19efcf75418..1f593676b824 100644
+index f19efcf..1f59367 100644
 --- a/mm/mmap.c
 +++ b/mm/mmap.c
 @@ -44,6 +44,7 @@
@@ -1334,7 +1316,7 @@ index f19efcf75418..1f593676b824 100644
  	return vma;
  
 diff --git a/mm/rmap.c b/mm/rmap.c
-index c570f82e6827..7bc83a5b91d3 100644
+index c570f82..7bc83a5 100644
 --- a/mm/rmap.c
 +++ b/mm/rmap.c
 @@ -1012,9 +1012,9 @@ void page_move_anon_rmap(struct page *page, struct vm_area_struct *vma)
@@ -1351,7 +1333,7 @@ index c570f82e6827..7bc83a5b91d3 100644
  static void __page_set_anon_rmap(struct page *page,
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 000000000000..c6bbddfaa331
+index 0000000..35ba4ec
 --- /dev/null
 +++ b/mm/uksm.c
 @@ -0,0 +1,5593 @@
@@ -2870,7 +2852,7 @@ index 000000000000..c6bbddfaa331
 +		*old_pte = *pvmw.pte;
 +
 +	if (pte_write(*pvmw.pte) || pte_dirty(*pvmw.pte) ||
-+	    (pte_protnone(*pvmw.pte) && pte_savedwrite(*pvmw.pte))) {
++	    (pte_protnone(*pvmw.pte) && pte_savedwrite(*pvmw.pte)) || mm_tlb_flush_pending(mm)) {
 +		pte_t entry;
 +
 +		swapped = PageSwapCache(page);
@@ -6949,7 +6931,7 @@ index 000000000000..c6bbddfaa331
 +#endif
 +
 diff --git a/mm/vmstat.c b/mm/vmstat.c
-index 9a4441bbeef2..c57b419226af 100644
+index 9a4441b..c57b419 100644
 --- a/mm/vmstat.c
 +++ b/mm/vmstat.c
 @@ -973,6 +973,9 @@ const char * const vmstat_text[] = {
