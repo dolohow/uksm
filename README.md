@@ -61,3 +61,8 @@ Its new features:
 # Credits
 
 Ultra KSM. Copyright (C) 2011-2016 Nai Xia
+
+
+# Reference
+
+[FAST '18] UKSM: Swift Memory Deduplication via Hierarchical and Adaptive Memory Region Distilling [[PDF](https://www.usenix.org/system/files/conference/fast18/fast18-xia.pdf)] [[Slides](https://www.usenix.org/sites/default/files/conference/protected-files/fast18_slides_xia.pdf)]
