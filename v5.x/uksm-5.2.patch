@@ -1325,7 +1325,7 @@ index 7e8c3e8ae75f..009231a88028 100644
  
 diff --git a/mm/uksm.c b/mm/uksm.c
 new file mode 100644
-index 000000000000..5ab3d39915d5
+index 000000000000..802f3261af10
 --- /dev/null
 +++ b/mm/uksm.c
 @@ -0,0 +1,5607 @@
@@ -2861,7 +2861,7 @@ index 000000000000..5ab3d39915d5
 +
 +	BUG_ON(PageTransCompound(page));
 +
-+       mmu_notifier_range_init(&range, mm, pvmw.address, pvmw.address + PAGE_SIZE);
++	mmu_notifier_range_init(&range, MMU_NOTIFY_PROTECTION_PAGE, 0, vma, mm, pvmw.address, pvmw.address + PAGE_SIZE);
 +	mmu_notifier_invalidate_range_start(&range);
 +
 +	if (!page_vma_mapped_walk(&pvmw))
@@ -2966,7 +2966,7 @@ index 000000000000..5ab3d39915d5
 +	if (!pmd_present(*pmd))
 +		goto out;
 +
-+       mmu_notifier_range_init(&range, mm, addr, addr + PAGE_SIZE);
++	mmu_notifier_range_init(&range, MMU_NOTIFY_CLEAR, 0, vma, mm, addr, addr + PAGE_SIZE);
 +	mmu_notifier_invalidate_range_start(&range);
 +
 +	ptep = pte_offset_map_lock(mm, pmd, addr, &ptl);
