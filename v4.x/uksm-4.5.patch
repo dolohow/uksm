@@ -99,14 +99,6 @@ index dcd4ac7..80032f8 100644
  
  #include <asm/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1162,6 +1163,7 @@ void setup_new_exec(struct linux_binprm * bprm)
- 	/* An exec changes our domain. We are no longer part of the thread
- 	   group */
- 	current->self_exec_id++;
-+
- 	flush_signal_handlers(current, 0);
- 	do_close_on_exec(current->files);
- }
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index df4661a..70b9f95 100644
 --- a/fs/proc/meminfo.c
