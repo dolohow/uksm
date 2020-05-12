@@ -1045,7 +1045,7 @@ index 390214d..738756d 100644
 +	and CPU efficiency. Since KVM is friendly to KSM, KVM can also benefit from
 +	UKSM. Now UKSM has its first stable release and first real world enterprise user.
 +	For more information, please goto its project page.
-+	(www.kerneldedup.org)
++	(github.com/dolohow/uksm)
 +
 +config KSM_LEGACY
 +	bool "Legacy KSM implementation"
