@@ -90,14 +90,6 @@ index 3a6de10..18c4dee 100644
  #include <linux/binfmts.h>
  #include <linux/utsname.h>
  #include <linux/pid_namespace.h>
-@@ -1183,6 +1184,7 @@ void setup_new_exec(struct linux_binprm * bprm)
- 	/* An exec changes our domain. We are no longer part of the thread
- 	   group */
- 	current->self_exec_id++;
-+
- 	flush_signal_handlers(current, 0);
- }
- EXPORT_SYMBOL(setup_new_exec);
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index 9155a5a..ae836fb 100644
 --- a/fs/proc/meminfo.c

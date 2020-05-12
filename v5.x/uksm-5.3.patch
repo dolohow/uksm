@@ -77,14 +77,6 @@ index f7f6a140856a..d527bdf329ef 100644
  
  #include <linux/uaccess.h>
  #include <asm/mmu_context.h>
-@@ -1383,6 +1384,7 @@ void setup_new_exec(struct linux_binprm * bprm)
- 	/* An exec changes our domain. We are no longer part of the thread
- 	   group */
- 	current->self_exec_id++;
-+
- 	flush_signal_handlers(current, 0);
- }
- EXPORT_SYMBOL(setup_new_exec);
 diff --git a/fs/proc/meminfo.c b/fs/proc/meminfo.c
 index 465ea0153b2a..42053264c4c6 100644
 --- a/fs/proc/meminfo.c
