@@ -202,7 +202,7 @@ index e24d2c992b11..8e9d8af58cf2 100644
 +#ifdef CONFIG_UKSM
 +static inline int is_uksm_zero_pfn(unsigned long pfn)
 +{
-+	extern unsigned long uksm_zero_pfn;
++	extern unsigned long uksm_zero_pfn __read_mostly;
 +	return pfn == uksm_zero_pfn;
 +}
 +#else
@@ -216,7 +216,12 @@ index e24d2c992b11..8e9d8af58cf2 100644
  #ifdef __HAVE_COLOR_ZERO_PAGE
  static inline int is_zero_pfn(unsigned long pfn)
  {
- 	extern unsigned long zero_pfn;
+-	extern unsigned long zero_pfn;
++#ifdef CONFIG_UKSM
++ extern unsigned long zero_pfn __read_mostly;
++#else
++ extern unsigned long zero_pfn;
++#endif
  	unsigned long offset_from_zero_pfn = pfn - zero_pfn;
 -	return offset_from_zero_pfn <= (zero_page_mask >> PAGE_SHIFT);
 +	return offset_from_zero_pfn <= (zero_page_mask >> PAGE_SHIFT) || is_uksm_zero_pfn(pfn);
@@ -226,7 +231,12 @@ index e24d2c992b11..8e9d8af58cf2 100644
 @@ -1152,7 +1165,7 @@ static inline int is_zero_pfn(unsigned long pfn)
  static inline int is_zero_pfn(unsigned long pfn)
  {
- 	extern unsigned long zero_pfn;
+-	extern unsigned long zero_pfn;
++#ifdef CONFIG_UKSM
++ extern unsigned long zero_pfn __read_mostly;
++#else
++ extern unsigned long zero_pfn;
++#endif
 -	return pfn == zero_pfn;
 +	return (pfn == zero_pfn) || (is_uksm_zero_pfn(pfn));
  }
@@ -1477,7 +1487,7 @@ index 000000000000..e4732c00be69
 +#else
 +static int is_full_zero(const void *s1, size_t len)
 +{
-+	unsigned long *src = s1;
++	const unsigned long *src = s1;
 +	int i;
 +
 +	len /= sizeof(*src);
