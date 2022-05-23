@@ -6139,7 +6139,7 @@ index 0000000..bd9038a
 +		while ((stable_node = uksm_check_stable_tree(mn->start_pfn,
 +					mn->start_pfn + mn->nr_pages)) != NULL)
 +			remove_node_from_stable_tree(stable_node, 1, 1);
-+		/* fallthrough */
++		fallthrough;
 +
 +	case MEM_CANCEL_OFFLINE:
 +		mutex_unlock(&uksm_thread_mutex);
